@@ -149,11 +149,16 @@ class Env(object):
         self.cur_time += time
         self.mask[:, idx] = 1
 
+        # refill if we are in depot
+        batch = torch.where(self.cur_loc == self.n_nodes - 1)[0]
+        self.cur_loc[batch] = self.max_load
+
         # update mask
         self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
+
         for batch in range(self.batch_size):
             for i, event in enumerate(self.time_demand[batch]):
-                # continue if demand is zero or event is not occured yet
+                # continue if demand is zero or event is not occurred yet
                 if event[3] == 0 or event[0] > self.cur_time[batch]:
                     continue
                 # if customer already gone (leaving time > current time)
@@ -161,14 +166,16 @@ class Env(object):
                     event[3] = 0
                 else:
                     self.demand[batch, i] = event[3]
+                    event[3] = 0
                     # check can we deliver enough demand and also time
                     t = self.dis_mat[batch, self.cur_loc[batch], i] / self.speed
                     if self.cur_load[batch] >= event[3] and event[2] <= self.cur_time[batch] + t:
                         self.mask[batch, i] = 0
 
-            # chech if sum of mask is equal to n_nodes open depot
-            batch = torch.where(torch.sum(self.mask, 1) == self.n_nodes)[0]
-            self.mask[batch, -1] = 0
+        # check if sum of mask is equal to n_nodes open depot
+        batch = torch.where(torch.sum(self.mask, 1) == self.n_nodes)[0]
+        self.mask[batch, -1] = 0
+
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
 
         return data, self.cur_loc, self.mask, self.demand, self.cur_load
