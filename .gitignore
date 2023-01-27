@@ -1,3 +1,5 @@
 *.pt
 __pycache__/
-*.txt
+logs
+datasets
+saved_models

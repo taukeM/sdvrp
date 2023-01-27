@@ -5,8 +5,7 @@ import os
 import math
 
 
-def create_test_dataset(
-        args):
+def create_test_dataset(args):
     batch_size = args['batch_size']
     n_nodes = args['n_nodes']
     data_dir = args['data_dir']
@@ -31,8 +30,7 @@ def create_test_dataset(
 
 
 class DataGenerator(object):
-    def __init__(self,
-                 args):
+    def __init__(self, args):
         self.args = args
         self.batch_size = args['batch_size']
         self.n_nodes = args['n_nodes']
@@ -122,7 +120,7 @@ class Env(object):
         self.demand = torch.zeros(self.batch_size, self.n_nodes, dtype=torch.long)
         # generate random indices for initial demand
         initial_demand_shape = (self.batch_size, self.initial_demand_size)
-        idx = torch.randint(0, self.n_nodes - 1, initial_demand_shape)
+        idx = (torch.arange(self.initial_demand_size)[None, :]).repeat(self.batch_size, 1)
         x = (torch.arange(self.batch_size)[:, None]).repeat(1, self.initial_demand_size)
         self.demand[x, idx] = torch.randint(1, self.max_load + 1, initial_demand_shape)
 
@@ -135,47 +133,69 @@ class Env(object):
         return data, self.mask, self.demand, self.cur_load
 
     def step(self, idx):
-        print(idx, "idx")
         idx = idx.view(-1, 1)
         time = self.dist_mat[(torch.arange(self.batch_size))[:, None], self.cur_loc, idx] / self.speed
-        time = torch.reshape(time, (-1,))
+        time = time.view(-1)
         self.cur_loc = idx
         self.cur_load -= self.demand[(torch.arange(self.batch_size))[:, None], idx]
 
         # check if demand > 0 add reward
         batch = torch.where(self.demand[:, idx] > 0)[0]
         self.reward[batch] += 1
-        self.demand[:, idx] = 0
+        self.demand[(torch.arange(self.batch_size))[:, None], idx] = 0
         self.cur_time += time
-        self.mask[:, idx] = 1
+        self.mask[(torch.arange(self.batch_size))[:, None], idx] = 1
 
         # refill if we are in depot
         batch = torch.where(self.cur_loc == self.n_nodes - 1)[0]
-        self.cur_loc[batch] = self.max_load
+        self.cur_load[batch] = self.max_load
 
         # update mask
         self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
+        not_occurred_yet = torch.where(self.time_demand[:, :, 3] != 0)[0]
+        print(not_occurred_yet, "not occurred yet")
+        if len(not_occurred_yet) > 0:
+            for batch in range(self.batch_size):
+                for i, event in enumerate(self.time_demand[batch]):
+                    # continue if demand is zero or event is not occurred yet
+                    if event[3] == 0 or event[0] > self.cur_time[batch]:
+                        continue
+                    # if customer already gone (leaving time > current time)
+                    if event[2] <= self.cur_time[batch]:
+                        event[3] = 0
+                        print(f'customer #{i} gone')
+                    else:
+                        self.demand[batch, i] = event[3]
+                        event[3] = 0
+                        # check can we deliver enough demand and also time
+                        t = self.dist_mat[batch, self.cur_loc[batch], i] / self.speed
+                        if self.cur_load[batch] >= event[3] and event[2] <= self.cur_time[batch] + t:
+                            self.mask[batch, i] = 0
 
-        for batch in range(self.batch_size):
-            for i, event in enumerate(self.time_demand[batch]):
-                # continue if demand is zero or event is not occurred yet
-                if event[3] == 0 or event[0] > self.cur_time[batch]:
-                    continue
-                # if customer already gone (leaving time > current time)
-                if event[2] >= self.cur_time[batch]:
-                    event[3] = 0
-                else:
-                    self.demand[batch, i] = event[3]
-                    event[3] = 0
-                    # check can we deliver enough demand and also time
-                    t = self.dis_mat[batch, self.cur_loc[batch], i] / self.speed
-                    if self.cur_load[batch] >= event[3] and event[2] <= self.cur_time[batch] + t:
-                        self.mask[batch, i] = 0
+            # check if cur_loc is depot and no demand didn't appear
+            waiting = torch.where(
+                torch.logical_and(torch.sum(self.mask, 1) == self.n_nodes,
+                                  (self.cur_loc == self.n_nodes - 1).view(-1)))[0]
+            for batch in waiting:
+                min_diff = math.inf
+                min_idx = -1
+                for i, event in enumerate(self.time_demand[batch]):
+                    # continue if demand is zero
+                    if event[3] == 0:
+                        continue
+                    if event[0] - self.cur_time[batch] < min_diff:
+                        min_diff = event[0] - self.cur_time[batch]
+                        min_idx = i
+                if min_idx != -1:
+                    self.demand[batch, min_idx] = self.time_demand[batch, min_idx, 3]
+                    self.mask[batch, min_idx] = 0
+                    self.time_demand[batch, min_idx, 3] = 0
+                    self.cur_time[batch] = self.cur_time[batch] + min_diff
 
         # check if sum of mask is equal to n_nodes open depot
         batch = torch.where(torch.sum(self.mask, 1) == self.n_nodes)[0]
         self.mask[batch, -1] = 0
-
+        # concatenate input points with demand
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
 
         return data, self.cur_loc, self.mask, self.demand, self.cur_load
