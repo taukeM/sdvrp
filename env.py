@@ -153,7 +153,6 @@ class Env(object):
         # update mask
         self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
         not_occurred_yet = torch.where(self.time_demand[:, :, 3] != 0)[0]
-        print(not_occurred_yet, "not occurred yet")
         if len(not_occurred_yet) > 0:
             for batch in range(self.batch_size):
                 for i, event in enumerate(self.time_demand[batch]):

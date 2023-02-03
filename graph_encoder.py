@@ -3,7 +3,7 @@ import numpy as np
 from torch import nn
 import math
 
-
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 class SkipConnection(nn.Module):
 
     def __init__(self, module):
@@ -166,7 +166,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     n_heads,
                     input_dim=embed_dim,
                     embed_dim=embed_dim
-                )
+                ).to(device)
             ),
             Normalization(embed_dim, normalization),
             SkipConnection(
@@ -175,7 +175,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     nn.ReLU(),
                     nn.Linear(feed_forward_hidden, embed_dim)
                 ) if feed_forward_hidden > 0 else nn.Linear(embed_dim, embed_dim)
-            ),
+            ).to(device),
             Normalization(embed_dim, normalization)
         )
 
@@ -198,7 +198,7 @@ class GraphAttentionEncoder(nn.Module):
         self.layers = nn.Sequential(*(
             MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization)
             for _ in range(n_layers)
-        ))
+        )).to(device)
 
     def forward(self, x, mask=None):
 

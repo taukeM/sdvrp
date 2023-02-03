@@ -4,14 +4,14 @@ from sdvrp.env import DataGenerator, Env
 from sdvrp.baseline import RolloutBaseline as Baseline
 
 args = {
-    'n_epochs': 2,
-    'n_batch': 2,
-    'batch_size': 4,
+    'n_epochs': 25,
+    'n_batch': 1000,
+    'batch_size': 512,
     'n_nodes': 10,
     'initial_demand_size': 2,
     'max_load': 9,
-    'speed': 1,
-    'lambda': 2,
+    'speed': 0.1,
+    'lambda': 1,
     'data_dir': 'datasets',
     'log_dir': 'logs',
     'save_path': 'saved_models',

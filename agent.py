@@ -5,7 +5,10 @@ import time
 import math
 from torch.nn import DataParallel
 
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+def move_to(var, device):
+    if isinstance(var, dict):
+        return {k: move_to(v, device) for k, v in var.items()}
+    return var.to(device)
 
 
 def set_decode_type(model, decode_type):
@@ -19,7 +22,6 @@ class State(object):
     def __init__(self, batch_size, n_nodes, mask, demand, cur_load):
         self.batch_size = batch_size
         self.n_nodes = n_nodes
-        # self.mask = torch.zeros(self.batch_size, 1, self.n_nodes, dtype=torch.bool).to(device)
         self.demand = demand
         self.mask = mask
         self.cur_load = cur_load
@@ -99,6 +101,8 @@ class A2CAgent(object):
                 print("epoch: ", epoch)
                 # evaluate b_l with  new train data and old model
                 data, bl_val = baseline.unwrap_batch(baseline_data[batch])
+                data = move_to(data, device)
+                bl_val = move_to(bl_val, device) if bl_val is not None else None
                 R, logs, actions = self.rollout_train(data)
                 # Calculate loss
                 adv = (R - bl_val).to(device)
@@ -112,6 +116,7 @@ class A2CAgent(object):
                 self.optimizer.step()
             epoch_duration = time.time() - start_time
             print("Finished epoch {}, took {} s".format(epoch, time.strftime('%H:%M:%S', time.gmtime(epoch_duration))))
+            self.test_data = move_to(self.test_data, device)
             avg_reward = self.rollout_test(self.test_data, self.model).mean()
             print("average test reward: ", avg_reward)
             if (epoch % args['save_interval'] == 0) or epoch == args['n_epochs'] - 1:
