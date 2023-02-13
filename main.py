@@ -11,7 +11,7 @@ args = {
     'initial_demand_size': 2,
     'max_load': 9,
     'speed': 0.1,
-    'lambda': 3,
+    'lambda': 1,
     'data_dir': 'datasets',
     'log_dir': 'logs',
     'save_path': 'saved_models',
