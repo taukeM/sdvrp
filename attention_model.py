@@ -4,7 +4,7 @@ import math
 from typing import NamedTuple
 from torch.nn import DataParallel
 
-from sdvrp.graph_encoder import GraphAttentionEncoder
+from graph_encoder import GraphAttentionEncoder
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -86,14 +86,14 @@ class AttentionModel(nn.Module):
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
         # Projects node embeddings beforehand
-        self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False)
+        self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False).to(device)
         # Projects graph embedding
-        self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False)
-        self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False)
+        self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False).to(device)
+        self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False).to(device)
         self.project_dist = nn.Linear(n_nodes, embedding_dim, bias=False)
         assert embedding_dim % n_heads == 0
         # Note n_heads * val_dim == embedding_dim so input to project_out is embedding_dim
-        self.project_out = nn.Linear(embedding_dim, embedding_dim, bias=False)
+        self.project_out = nn.Linear(embedding_dim, embedding_dim, bias=False).to(device)
 
     def embed(self, static):
         # encoder
@@ -115,7 +115,7 @@ class AttentionModel(nn.Module):
         if normalize:
             log_p = torch.log_softmax(log_p / self.temp, dim=-1)
         assert not torch.isnan(log_p).any()
-        action = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])
+        action = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :].to(device))
         return log_p, action
 
     def _one_to_many_logits(self, query, glimpse_K, glimpse_V, logit_K, mask):
@@ -148,7 +148,6 @@ class AttentionModel(nn.Module):
         # Batch matrix multiplication to compute logits (batch_size, num_steps, graph_size)
         # logits = 'compatibility'
         logits = torch.matmul(final_Q, logit_K.transpose(-2, -1)).squeeze(-2) / math.sqrt(final_Q.size(-1))
-
 
         # From the logits compute the probabilities by clipping, masking and softmax
         if self.tanh_clipping > 0:
@@ -225,7 +224,7 @@ class AttentionModel(nn.Module):
                     .view(batch_size, num_steps, 1)
                     .expand(batch_size, num_steps, embeddings.size(-1))
                 ).view(batch_size, num_steps, embeddings.size(-1)),
-                state.cur_load[:, :, None]
+                state.cur_load[:, :, None].to(device)
             ),
             -1
         )

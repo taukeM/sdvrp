@@ -5,6 +5,7 @@ import time
 import math
 from torch.nn import DataParallel
 
+
 def move_to(var, device):
     if isinstance(var, dict):
         return {k: move_to(v, device) for k, v in var.items()}
@@ -17,6 +18,9 @@ def set_decode_type(model, decode_type):
     model.set_decode_type(decode_type)
 
 
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
 class State(object):
 
     def __init__(self, batch_size, n_nodes, mask, demand, cur_load):
@@ -24,8 +28,8 @@ class State(object):
         self.n_nodes = n_nodes
         self.demand = demand
         self.mask = mask
-        self.cur_load = cur_load
-        self.cur_loc = torch.full((self.batch_size, 1), self.n_nodes - 1)
+        self.cur_load = cur_load.to(device)
+        self.cur_loc = torch.full((self.batch_size, 1), self.n_nodes - 1).to(device)
 
     def __getitem__(self, item):
         return {
@@ -37,8 +41,8 @@ class State(object):
 
     def update(self, cur_loc, mask, demand, cur_load):
         # self.current_node = current_node[:, None]
-        self.cur_loc = cur_loc
-        self.cur_load = cur_load
+        self.cur_loc = cur_loc.to(device)
+        self.cur_load = cur_load.to(device)
         self.demand = demand
         self.mask = mask
 
@@ -61,9 +65,6 @@ def clip_grad_norms(param_groups, max_norm=math.inf):
     ]
     grad_norms_clipped = [min(g_norm, max_norm) for g_norm in grad_norms] if max_norm > 0 else grad_norms
     return grad_norms, grad_norms_clipped
-
-
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 class A2CAgent(object):
@@ -101,7 +102,6 @@ class A2CAgent(object):
                 print("epoch: ", epoch)
                 # evaluate b_l with  new train data and old model
                 data, bl_val = baseline.unwrap_batch(baseline_data[batch])
-                data = move_to(data, device)
                 bl_val = move_to(bl_val, device) if bl_val is not None else None
                 R, logs, actions = self.rollout_train(data)
                 # Calculate loss
@@ -116,7 +116,6 @@ class A2CAgent(object):
                 self.optimizer.step()
             epoch_duration = time.time() - start_time
             print("Finished epoch {}, took {} s".format(epoch, time.strftime('%H:%M:%S', time.gmtime(epoch_duration))))
-            self.test_data = move_to(self.test_data, device)
             avg_reward = self.rollout_test(self.test_data, self.model).mean()
             print("average test reward: ", avg_reward)
             if (epoch % args['save_interval'] == 0) or epoch == args['n_epochs'] - 1:
@@ -158,6 +157,7 @@ class A2CAgent(object):
         set_decode_type(self.model, "sampling")
 
         data, mask, demand, cur_load = env.reset(data)
+        data = move_to(data, device)
         embeddings, fixed = model.embed(data)
         state = State(env.batch_size, env.n_nodes, mask, demand, cur_load)
 
@@ -173,15 +173,18 @@ class A2CAgent(object):
             actions.append(idx)
             time_step += 1
             print(time_step, " time step")
-            data, cur_loc, mask, demand, cur_load = env.step(idx)
+            data, cur_loc, mask, demand, cur_load, finished = env.step(idx)
+            if finished:
+                break
             state.update(cur_loc, mask, demand, cur_load)
+            data = move_to(data, device)
             embeddings, fixed = model.embed(data)
 
             print("{}: {}".format("state update", state[0]))
             print("{}: {}".format("mask", mask[0]))
             # print("{}: {}".format("state", env.state[0]))
 
-        R = env.reward
+        R = env.reward.to(device)
         logs = torch.stack(logs, 1)
         actions = torch.stack(actions, 1)
 
@@ -194,6 +197,7 @@ class A2CAgent(object):
         model.eval()
         set_decode_type(self.model, "greedy")
         data, mask, demand, cur_load = env.reset(data)
+        data = move_to(data, device)
         embeddings, fixed = model.embed(data)
         state = State(env.batch_size, env.n_nodes, mask, demand, cur_load)
 
@@ -205,7 +209,10 @@ class A2CAgent(object):
             log_p, idx = model(embeddings, fixed, state)
             time_step += 1
             print(time_step, " time step")
-            data, cur_loc, mask, demand, cur_load = env.step(idx)
+            data, cur_loc, mask, demand, cur_load, finished = env.step(idx)
+            if finished:
+                break
+            data = move_to(data, device)
             state.update(cur_loc, mask, demand, cur_load)
             embeddings, fixed = model.embed(data)
 
@@ -213,6 +220,6 @@ class A2CAgent(object):
             print("{}: {}".format("mask", mask[0]))
             # print("{}: {}".format("state", env.state[0]))
 
-        R = env.reward
+        R = env.reward.to(device)
 
         return R

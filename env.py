@@ -22,6 +22,9 @@ def create_test_dataset(args):
         print('Creating dataset for {}...'.format(task_name))
         # Generate a training set of size batch_size
         input_data = torch.rand(batch_size, n_nodes, 2)
+        # fix depot (0.5, o.5)
+        input_data[:, n_nodes - 1, 0] = 0.5
+        input_data[:, n_nodes - 1, 1] = 0.5
         time_demand = generate_events(args)
         data = torch.cat((input_data, time_demand), -1)
         torch.save(data, fname)
@@ -44,6 +47,8 @@ class DataGenerator(object):
 
     def get_train_next(self, n_batches):
         train_data = torch.rand(n_batches, self.batch_size, self.n_nodes, 2)
+        train_data[:, :, self.n_nodes - 1, 0] = 0.5
+        train_data[:, :, self.n_nodes - 1, 1] = 0.5
         time_demand = torch.zeros(n_batches, self.batch_size, self.n_nodes, 4)
         for i in range(n_batches):
             time_demand[i] = generate_events(self.args)
@@ -136,7 +141,7 @@ class Env(object):
         idx = idx.view(-1, 1)
         time = self.dist_mat[(torch.arange(self.batch_size))[:, None], self.cur_loc, idx] / self.speed
         time = time.view(-1)
-        self.cur_loc = idx
+        self.cur_loc = idx.to(torch.device("cpu"))
         self.cur_load -= self.demand[(torch.arange(self.batch_size))[:, None], idx]
 
         # check if demand > 0 add reward
@@ -194,7 +199,14 @@ class Env(object):
         # check if sum of mask is equal to n_nodes open depot
         batch = torch.where(torch.sum(self.mask, 1) == self.n_nodes)[0]
         self.mask[batch, -1] = 0
+        finished = False
+        if torch.all(torch.logical_and(torch.sum(self.demand, 1) == 0,
+                                       torch.logical_and((self.cur_loc == self.n_nodes - 1).view(-1),
+                                                         torch.sum(self.time_demand[:, :, 3], 1) == 0))):
+            finished = True
+            # print("\nfinished!\n")
+
         # concatenate input points with demand
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
 
-        return data, self.cur_loc, self.mask, self.demand, self.cur_load
+        return data, self.cur_loc, self.mask, self.demand, self.cur_load, finished
