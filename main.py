@@ -5,6 +5,7 @@ from sdvrp.baseline import RolloutBaseline as Baseline
 
 args = {
     'n_epochs': 10,
+    'n_batch': 10,
     'batch_size': 4,
     'n_nodes': 10,
     'initial_demand_size': 2,

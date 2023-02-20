@@ -92,36 +92,40 @@ class A2CAgent(object):
 
         start_time = time.time()
         reward_epoch = torch.zeros(args['n_epochs'])
-        total_demand = torch.zeros(args['n_epochs'])
+        total_demand_epoch = torch.zeros(args['n_epochs'])
         for epoch in range(args['n_epochs']):
             # [batch_size, n_nodes, 3]: entire epoch train data
-            train_data = self.dataGen.get_train_next()
+            train_data = self.dataGen.get_train_next(args['n_batch'])
             # compute baseline value for the entire epoch
             baseline_data = baseline.wrap_dataset(train_data)
-
             # compute for each batch the rollout
             # train each batch
-            print("epoch: ", epoch)
-            # evaluate b_l with  new train data and old model
-            data, bl_val = baseline.unwrap_batch(baseline_data[0])
-            bl_val = move_to(bl_val, device) if bl_val is not None else None
-            R, logs, actions = self.rollout_train(data)
-            # Calculate loss
-            adv = (R - bl_val).to(device)
-            loss = (adv * logs).mean()
-            losses.append(loss)
-            # Perform backward pass and optimization step
-            self.optimizer.zero_grad()
-            loss.backward()
-            # Clip gradient norms and get (clipped) gradient norms for logging
-            grad_norms = clip_grad_norms(self.optimizer.param_groups, args['max_grad_norm'])
-            self.optimizer.step()
+            total_demand = torch.zeros(args['batch_size'])
+            for batch in range(args['n_batch']):
+                print("batch: ", batch)
+                print("epoch: ", epoch)
+                # evaluate b_l with  new train data and old model
+                data, bl_val = baseline.unwrap_batch(baseline_data[batch])
+                bl_val = move_to(bl_val, device) if bl_val is not None else None
+                R, logs, actions = self.rollout_train(data)
+                total_demand += self.env.total_demand
+                # Calculate loss
+                adv = (R - bl_val).to(device)
+                loss = (adv * logs).mean()
+                losses.append(loss)
+                # Perform backward pass and optimization step
+                self.optimizer.zero_grad()
+                loss.backward()
+                # Clip gradient norms and get (clipped) gradient norms for logging
+                grad_norms = clip_grad_norms(self.optimizer.param_groups, args['max_grad_norm'])
+                self.optimizer.step()
             epoch_duration = time.time() - start_time
             print("Finished epoch {}, took {} s".format(epoch, time.strftime('%H:%M:%S', time.gmtime(epoch_duration))))
             avg_reward = self.rollout_test(self.test_data, self.model).mean()
             print("average test reward: ", avg_reward)
             reward_epoch[epoch] = avg_reward
-            total_demand[epoch] = -self.env.total_demand.mean()
+            print(total_demand)
+            total_demand_epoch[epoch] = (total_demand/args['n_epochs']).mean()
             if (epoch % args['save_interval'] == 0) or epoch == args['n_epochs'] - 1:
                 print('Saving model and state...')
                 torch.save(
@@ -153,7 +157,7 @@ class A2CAgent(object):
             # np.savetxt("trained_models/losses.txt", losses)
             # lr_scheduler should be called at end of epoch
             self.lr_scheduler.step()
-        ratio = reward_epoch/total_demand
+        ratio = reward_epoch/total_demand_epoch
         plt.plot(torch.arange(args['n_epochs']).numpy(), ratio.cpu().numpy())
         plt.savefig(os.path.join('plots', f'reward_ratio-{self.env.n_nodes}.png'))
 

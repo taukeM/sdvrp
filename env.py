@@ -43,13 +43,14 @@ class DataGenerator(object):
     def reset(self):
         self.count = 0
 
-    def get_train_next(self):
-        train_data = torch.rand(self.batch_size, self.n_nodes, 2)
-        train_data[:, self.n_nodes - 1, 0] = 0.5
-        train_data[:, self.n_nodes - 1, 1] = 0.5
-        time_demand = generate_events(self.args)
+    def get_train_next(self, n_batches):
+        train_data = torch.rand(n_batches, self.batch_size, self.n_nodes, 2)
+        train_data[:, :, self.n_nodes - 1, 0] = 0.5
+        train_data[:, :, self.n_nodes - 1, 1] = 0.5
+        time_demand = torch.zeros(n_batches, self.batch_size, self.n_nodes, 4)
+        for i in range(n_batches):
+            time_demand[i] = generate_events(self.args)
         return torch.cat((train_data, time_demand), -1)
-
     def get_test_next(self):
         pass
 
