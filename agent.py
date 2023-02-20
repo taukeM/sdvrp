@@ -3,7 +3,6 @@ import torch.optim as optim
 import os
 import time
 import math
-import matplotlib.pyplot as plt
 from torch.nn import DataParallel
 
 
@@ -91,37 +90,34 @@ class A2CAgent(object):
         losses = []
 
         start_time = time.time()
-        reward_epoch = torch.zeros(args['n_epochs'])
-        total_demand = torch.zeros(args['n_epochs'])
         for epoch in range(args['n_epochs']):
-            # [batch_size, n_nodes, 3]: entire epoch train data
-            train_data = self.dataGen.get_train_next()
+            # [n_batches, batch_size, n_nodes, 3]: entire epoch train data
+            train_data = self.dataGen.get_train_next(args['n_batch'])
             # compute baseline value for the entire epoch
             baseline_data = baseline.wrap_dataset(train_data)
-
             # compute for each batch the rollout
             # train each batch
-            print("epoch: ", epoch)
-            # evaluate b_l with  new train data and old model
-            data, bl_val = baseline.unwrap_batch(baseline_data[0])
-            bl_val = move_to(bl_val, device) if bl_val is not None else None
-            R, logs, actions = self.rollout_train(data)
-            # Calculate loss
-            adv = (R - bl_val).to(device)
-            loss = (adv * logs).mean()
-            losses.append(loss)
-            # Perform backward pass and optimization step
-            self.optimizer.zero_grad()
-            loss.backward()
-            # Clip gradient norms and get (clipped) gradient norms for logging
-            grad_norms = clip_grad_norms(self.optimizer.param_groups, args['max_grad_norm'])
-            self.optimizer.step()
+            for batch in range(args['n_batch']):
+                print("batch: ", batch)
+                print("epoch: ", epoch)
+                # evaluate b_l with  new train data and old model
+                data, bl_val = baseline.unwrap_batch(baseline_data[batch])
+                bl_val = move_to(bl_val, device) if bl_val is not None else None
+                R, logs, actions = self.rollout_train(data)
+                # Calculate loss
+                adv = (R - bl_val).to(device)
+                loss = (adv * logs).mean()
+                losses.append(loss)
+                # Perform backward pass and optimization step
+                self.optimizer.zero_grad()
+                loss.backward()
+                # Clip gradient norms and get (clipped) gradient norms for logging
+                grad_norms = clip_grad_norms(self.optimizer.param_groups, args['max_grad_norm'])
+                self.optimizer.step()
             epoch_duration = time.time() - start_time
             print("Finished epoch {}, took {} s".format(epoch, time.strftime('%H:%M:%S', time.gmtime(epoch_duration))))
             avg_reward = self.rollout_test(self.test_data, self.model).mean()
             print("average test reward: ", avg_reward)
-            reward_epoch[epoch] = avg_reward
-            total_demand[epoch] = -self.env.total_demand.mean()
             if (epoch % args['save_interval'] == 0) or epoch == args['n_epochs'] - 1:
                 print('Saving model and state...')
                 torch.save(
@@ -134,7 +130,7 @@ class A2CAgent(object):
                     },
                     os.path.join(args['save_path'], 'epoch-{}.pt'.format(epoch))
                 )
-            if avg_reward > best_model:
+            if avg_reward < best_model:
                 best_model = avg_reward
                 torch.save(
                     {
@@ -153,10 +149,6 @@ class A2CAgent(object):
             # np.savetxt("trained_models/losses.txt", losses)
             # lr_scheduler should be called at end of epoch
             self.lr_scheduler.step()
-        plt.plot(torch.arange(args['n_epochs']).numpy(), reward_epoch.cpu().numpy())
-        plt.plot(torch.arange(args['n_epochs']).numpy(), total_demand.cpu().numpy())
-        plt.show()
-        print(reward_epoch, "reward epoch")
 
     def rollout_train(self, data):
         env = self.env
@@ -188,8 +180,8 @@ class A2CAgent(object):
             data = move_to(data, device)
             embeddings, fixed = model.embed(data)
 
-            # print("{}: {}".format("state update", state[0]))
-            # print("{}: {}".format("mask", mask[0]))
+            print("{}: {}".format("state update", state[0]))
+            print("{}: {}".format("mask", mask[0]))
             # print("{}: {}".format("state", env.state[0]))
 
         R = env.reward.to(device)
@@ -200,17 +192,17 @@ class A2CAgent(object):
 
         return R, logs, actions
 
-    def rollout_test(self, data_o, model):
+    def rollout_test(self, data, model):
         env = self.env
         model.eval()
         set_decode_type(self.model, "greedy")
-        data, mask, demand, cur_load = env.reset(data_o)
+        data, mask, demand, cur_load = env.reset(data)
         data = move_to(data, device)
         embeddings, fixed = model.embed(data)
         state = State(env.batch_size, env.n_nodes, mask, demand, cur_load)
 
-        # print("{}: {}".format("initial state", state[0]))
-        # print("{}: {}".format("mask", mask[0]))
+        print("{}: {}".format("initial state", state[0]))
+        print("{}: {}".format("mask", mask[0]))
         time_step = 0
 
         while time_step < self.args['decode_len']:
@@ -224,8 +216,8 @@ class A2CAgent(object):
             state.update(cur_loc, mask, demand, cur_load)
             embeddings, fixed = model.embed(data)
 
-            # print("{}: {}".format("state update", state[0]))
-            # print("{}: {}".format("mask", mask[0]))
+            print("{}: {}".format("state update", state[0]))
+            print("{}: {}".format("mask", mask[0]))
             # print("{}: {}".format("state", env.state[0]))
 
         R = env.reward.to(device)

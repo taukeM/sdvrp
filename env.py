@@ -67,7 +67,7 @@ def generate_events(args):
     max_load = args['max_load']
     initial_demand_size = args['initial_demand_size']
 
-    time_demand = torch.zeros(batch_size, n_nodes, 3)
+    time_demand = torch.zeros(batch_size, n_nodes, 4)
     # time_demand = torch.zeros(2,10,4)
 
     for k in range(batch_size):
@@ -116,7 +116,10 @@ class Env(object):
                 self.dist_mat[:, i, j] = ((self.input_pnt[:, i, 0] - self.input_pnt[:, j, 0]) ** 2 +
                                           (self.input_pnt[:, i, 1] - self.input_pnt[:, j, 1]) ** 2) ** 0.5
                 self.dist_mat[:, j, i] = self.dist_mat[:, i, j]
-        self.max_dist = torch.max(self.dist_mat, 1)
+        self.max_dist = torch.max(torch.max(self.dist_mat, 1)[0], 1)[0]
+        self.waiting_time = self.max_dist / self.speed * 3
+        self.time_demand[:, :, 3] = self.time_demand[:, :, 0] + self.waiting_time
+
         self.cur_load = torch.full((self.batch_size, 1), self.max_load, dtype=torch.long)
         self.cur_loc = torch.full((self.batch_size, 1), self.n_nodes - 1)
         self.mask = torch.ones(self.batch_size, self.n_nodes, dtype=torch.long)
@@ -130,7 +133,6 @@ class Env(object):
         self.mask[x, idx] = 0
         self.cur_time = torch.zeros(self.batch_size)
         self.reward = torch.zeros(self.batch_size)
-        self.answered = torch.zeros(self.batch_size, self.n_nodes)
         print(torch.sum(self.time_demand[:, :, 2], 1), "env.reset(): total")
         self.total_demand = torch.sum(self.demand, 1) + torch.sum(self.time_demand[:, :, 2], 1)
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
@@ -155,10 +157,6 @@ class Env(object):
         print(self.time_demand[0])
         self.mask[(torch.arange(self.batch_size))[:, None], idx] = 1
 
-        # update demand to zero for customers that have been unanswered for 5-time units
-        self.answered += 1
-        self.demand = torch.where(self.answered >= 5, 0, self.demand)
-
         # refill if we are in depot
         batch = torch.where(self.cur_loc == self.n_nodes - 1)[0]
         self.cur_load[batch] = self.max_load
@@ -173,9 +171,12 @@ class Env(object):
                     # continue if demand is zero or event is not occurred yet
                     if event[2] == 0 or event[0] > self.cur_time[batch]:
                         continue
+                    # if customer left (event[3] - leaving time)
+                    if event[3] <= self.cur_time[batch]:
+                        event[2] = 0
+                        print(f'customer#{i} left')
                     else:
                         self.demand[batch, i] = event[2]
-                        self.answered[batch, i] = 0
                         event[2] = 0
                         # check can we deliver enough demand
                         if self.cur_load[batch] >= event[2]:
@@ -198,7 +199,6 @@ class Env(object):
             if min_idx != -1:
                 self.demand[batch, min_idx] = self.time_demand[batch, min_idx, 2]
                 self.mask[batch, min_idx] = 0
-                self.answered[batch, min_idx] = 0
                 self.time_demand[batch, min_idx, 2] = 0
                 self.cur_time[batch] = self.cur_time[batch] + min_diff
 
