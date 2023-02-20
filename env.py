@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 import random
 import os
 import math
@@ -16,7 +15,6 @@ def create_test_dataset(args):
     # create/load data
     if os.path.exists(fname):
         print('Loading dataset for {}...'.format(task_name))
-
         data = torch.load(fname)
     else:
         print('Creating dataset for {}...'.format(task_name))
@@ -45,13 +43,11 @@ class DataGenerator(object):
     def reset(self):
         self.count = 0
 
-    def get_train_next(self, n_batches):
-        train_data = torch.rand(n_batches, self.batch_size, self.n_nodes, 2)
-        train_data[:, :, self.n_nodes - 1, 0] = 0.5
-        train_data[:, :, self.n_nodes - 1, 1] = 0.5
-        time_demand = torch.zeros(n_batches, self.batch_size, self.n_nodes, 3)
-        for i in range(n_batches):
-            time_demand[i] = generate_events(self.args)
+    def get_train_next(self):
+        train_data = torch.rand(self.batch_size, self.n_nodes, 2)
+        train_data[:, self.n_nodes - 1, 0] = 0.5
+        train_data[:, self.n_nodes - 1, 1] = 0.5
+        time_demand = generate_events(self.args)
         return torch.cat((train_data, time_demand), -1)
 
     def get_test_next(self):
@@ -77,10 +73,7 @@ def generate_events(args):
     for k in range(batch_size):
         _arrival_time = 0
         nodes = [i for i in range(initial_demand_size, n_nodes - 1)]
-        for i in range(n_nodes - initial_demand_size - 1):
-            # Choose random node index
-            idx = random.choice(nodes)
-            nodes.remove(idx)
+        for i in range(n_nodes - 1):
 
             # Get the next probability value from Uniform(0,1)
             p = random.random()
@@ -89,6 +82,13 @@ def generate_events(args):
 
             # Add the inter-arrival time to the running sum
             _arrival_time = _arrival_time + _inter_arrival_time
+
+            if i < initial_demand_size:
+                continue
+
+            # Choose random node index
+            idx = random.choice(nodes)
+            nodes.remove(idx)
 
             time_demand[k][idx][0] = _arrival_time
             time_demand[k][idx][1] = _inter_arrival_time
@@ -108,14 +108,15 @@ class Env(object):
 
     def reset(self, data):
         self.input_pnt = data[:, :, :2]
-        self.time_demand = data[:, :, 2:]
+        self.time_demand = data[:, :, 2:].detach().clone()
         self.dist_mat = torch.zeros(self.batch_size, self.n_nodes, self.n_nodes, dtype=torch.float)
+
         for i in range(self.n_nodes):
             for j in range(i + 1, self.n_nodes):
                 self.dist_mat[:, i, j] = ((self.input_pnt[:, i, 0] - self.input_pnt[:, j, 0]) ** 2 +
                                           (self.input_pnt[:, i, 1] - self.input_pnt[:, j, 1]) ** 2) ** 0.5
                 self.dist_mat[:, j, i] = self.dist_mat[:, i, j]
-
+        self.max_dist = torch.max(self.dist_mat, 1)
         self.cur_load = torch.full((self.batch_size, 1), self.max_load, dtype=torch.long)
         self.cur_loc = torch.full((self.batch_size, 1), self.n_nodes - 1)
         self.mask = torch.ones(self.batch_size, self.n_nodes, dtype=torch.long)
@@ -126,34 +127,36 @@ class Env(object):
         idx = (torch.arange(self.initial_demand_size)[None, :]).repeat(self.batch_size, 1)
         x = (torch.arange(self.batch_size)[:, None]).repeat(1, self.initial_demand_size)
         self.demand[x, idx] = torch.randint(1, self.max_load + 1, initial_demand_shape)
-
         self.mask[x, idx] = 0
         self.cur_time = torch.zeros(self.batch_size)
         self.reward = torch.zeros(self.batch_size)
         self.answered = torch.zeros(self.batch_size, self.n_nodes)
-        self.counter = 0
-
+        print(torch.sum(self.time_demand[:, :, 2], 1), "env.reset(): total")
+        self.total_demand = torch.sum(self.demand, 1) + torch.sum(self.time_demand[:, :, 2], 1)
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
 
         return data, self.mask, self.demand, self.cur_load
 
     def step(self, idx):
-        idx = idx.view(-1, 1)
+        idx = idx.view(-1, 1).to(torch.device("cpu"))
         time = self.dist_mat[(torch.arange(self.batch_size))[:, None], self.cur_loc, idx] / self.speed
         time = time.view(-1)
-        self.cur_loc = idx.to(torch.device("cpu"))
+
+        self.cur_loc = idx
         self.cur_load -= self.demand[(torch.arange(self.batch_size))[:, None], idx]
 
         # check if demand > 0 add reward
         batch = torch.where(self.demand[:, idx] > 0)[0]
-        self.reward[batch] += 1
+        self.reward[(torch.arange(self.batch_size))[:, None]] -= self.demand[
+            (torch.arange(self.batch_size))[:, None], idx]
         self.demand[(torch.arange(self.batch_size))[:, None], idx] = 0
         self.cur_time += time
+        print(self.cur_time[0])
+        print(self.time_demand[0])
         self.mask[(torch.arange(self.batch_size))[:, None], idx] = 1
 
         # update demand to zero for customers that have been unanswered for 5-time units
         self.answered += 1
-        self.counter += len(torch.where(torch.logical_and(self.answered >= 5, self.demand > 0))[0])
         self.demand = torch.where(self.answered >= 5, 0, self.demand)
 
         # refill if we are in depot
@@ -195,6 +198,7 @@ class Env(object):
             if min_idx != -1:
                 self.demand[batch, min_idx] = self.time_demand[batch, min_idx, 2]
                 self.mask[batch, min_idx] = 0
+                self.answered[batch, min_idx] = 0
                 self.time_demand[batch, min_idx, 2] = 0
                 self.cur_time[batch] = self.cur_time[batch] + min_diff
 
@@ -206,7 +210,6 @@ class Env(object):
                                        torch.logical_and((self.cur_loc == self.n_nodes - 1).view(-1),
                                                          torch.sum(self.time_demand[:, :, 2], 1) == 0))):
             finished = True
-            # print("\nfinished!\n")
 
         # concatenate input points with demand
         data = torch.cat((self.input_pnt, self.demand[:, :, None]), -1)
