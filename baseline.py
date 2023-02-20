@@ -9,12 +9,9 @@ def rollout(agent, model, dataset, args):
         cost = agent.rollout_test(bat, model)
         return cost
 
-    bl_val = torch.zeros([args['n_batch'], args['batch_size']])
-    print("n_batch: ", args['n_batch'])
     print("dataset: ", dataset.shape)
-    for batch in range(args['n_batch']):
-        bl_val[batch, :] = eval_model_bat(dataset[batch])
-        print("batch b_l: ", batch)
+    bl_val = eval_model_bat(dataset)
+    print(dataset, 'baseline iwinde')
     return bl_val
 
 
@@ -27,8 +24,8 @@ class BaselineDataset(object):
 
     def __getitem__(self, item):
         return {
-            'data': self.dataset[item],
-            'baseline': self.baseline[item]
+            'data': self.dataset,
+            'baseline': self.baseline
         }
 
 
@@ -55,7 +52,7 @@ class RolloutBaseline(object):
         #      dataset = None
 
         if dataset is None:
-            self.dataset = self.dataGen.get_train_next(self.args['n_batch'])
+            self.dataset = self.dataGen.get_train_next()
         else:
             self.dataset = dataset
         print("Evaluating baseline model on evaluation dataset")
@@ -96,9 +93,9 @@ class RolloutBaseline(object):
 
         if candidate_mean - self.mean < 0:
             # Calc p value
-            n_batch, batch_size = candidate_vals.shape
-            candidate_vals = candidate_vals.reshape(n_batch * batch_size)
-            bl_vals = self.bl_vals.reshape(n_batch * batch_size)
+            batch_size = candidate_vals.shape
+            candidate_vals = candidate_vals.reshape(batch_size)
+            bl_vals = self.bl_vals.reshape(batch_size)
             t, p = ttest_rel(candidate_vals, bl_vals)
             p_val = p / 2  # one-sided
             assert t < 0, "T-statistic should be negative"
@@ -119,3 +116,4 @@ class RolloutBaseline(object):
         load_model = copy.deepcopy(self.model)
         load_model.load_state_dict(state_dict['model'].state_dict())
         self._update_model(load_model, state_dict['epoch'], state_dict['dataset'])
+

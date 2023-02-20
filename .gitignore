@@ -3,3 +3,4 @@ __pycache__/
 logs
 datasets
 saved_models
+plots
