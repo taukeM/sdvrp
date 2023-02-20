@@ -117,7 +117,9 @@ class Env(object):
                                           (self.input_pnt[:, i, 1] - self.input_pnt[:, j, 1]) ** 2) ** 0.5
                 self.dist_mat[:, j, i] = self.dist_mat[:, i, j]
         self.max_dist = torch.max(torch.max(self.dist_mat, 1)[0], 1)[0]
+
         self.waiting_time = self.max_dist / self.speed * 3
+        self.waiting_time = self.waiting_time.reshape((-1,1)).repeat(1,self.n_nodes)
         self.time_demand[:, :, 3] = self.time_demand[:, :, 0] + self.waiting_time
 
         self.cur_load = torch.full((self.batch_size, 1), self.max_load, dtype=torch.long)
