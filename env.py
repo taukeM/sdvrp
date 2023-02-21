@@ -51,6 +51,7 @@ class DataGenerator(object):
         for i in range(n_batches):
             time_demand[i] = generate_events(self.args)
         return torch.cat((train_data, time_demand), -1)
+
     def get_test_next(self):
         pass
 
@@ -119,8 +120,8 @@ class Env(object):
                 self.dist_mat[:, j, i] = self.dist_mat[:, i, j]
         self.max_dist = torch.max(torch.max(self.dist_mat, 1)[0], 1)[0]
 
-        self.waiting_time = self.max_dist / self.speed * 3
-        self.waiting_time = self.waiting_time.reshape((-1,1)).repeat(1,self.n_nodes)
+        self.waiting_time = self.max_dist / self.speed * 2
+        self.waiting_time = self.waiting_time.reshape((-1, 1)).repeat(1, self.n_nodes)
         self.time_demand[:, :, 3] = self.time_demand[:, :, 0] + self.waiting_time
 
         self.cur_load = torch.full((self.batch_size, 1), self.max_load, dtype=torch.long)
@@ -156,16 +157,11 @@ class Env(object):
             (torch.arange(self.batch_size))[:, None], idx]
         self.demand[(torch.arange(self.batch_size))[:, None], idx] = 0
         self.cur_time += time
-        print(self.cur_time[0])
-        print(self.time_demand[0])
         self.mask[(torch.arange(self.batch_size))[:, None], idx] = 1
 
         # refill if we are in depot
         batch = torch.where(self.cur_loc == self.n_nodes - 1)[0]
         self.cur_load[batch] = self.max_load
-
-        # update mask
-        self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
 
         for batch in range(self.batch_size):
             not_occurred_yet = torch.where(self.time_demand[batch, :, 2] != 0)[0]
@@ -181,14 +177,12 @@ class Env(object):
                     else:
                         self.demand[batch, i] = event[2]
                         event[2] = 0
-                        # check can we deliver enough demand
-                        if self.cur_load[batch] >= event[2]:
-                            self.mask[batch, i] = 0
 
-        # check if cur_loc is depot and no demand didn't appear
-        waiting = torch.where(
-            torch.logical_and(torch.sum(self.mask, 1) == self.n_nodes,
-                              (self.cur_loc == self.n_nodes - 1).view(-1)))[0]
+        # update mask
+        self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
+
+        # check if no demand didn't appear
+        waiting = torch.where(torch.sum(self.mask, 1) == self.n_nodes)[0]
         for batch in waiting:
             min_diff = math.inf
             min_idx = -1
@@ -201,7 +195,8 @@ class Env(object):
                     min_idx = i
             if min_idx != -1:
                 self.demand[batch, min_idx] = self.time_demand[batch, min_idx, 2]
-                self.mask[batch, min_idx] = 0
+                if self.cur_load[batch] > self.demand[batch, min_idx]:
+                    self.mask[batch, min_idx] = 0
                 self.time_demand[batch, min_idx, 2] = 0
                 self.cur_time[batch] = self.cur_time[batch] + min_diff
 
