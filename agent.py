@@ -5,6 +5,7 @@ import time
 import math
 import matplotlib.pyplot as plt
 from torch.nn import DataParallel
+import numpy as np
 
 
 def move_to(var, device):
@@ -92,6 +93,7 @@ class A2CAgent(object):
 
         start_time = time.time()
         reward_epoch = torch.zeros(args['n_epochs'])
+        total_demand_epoch = torch.zeros(args['n_epochs'])
         for epoch in range(args['n_epochs']):
             # [batch_size, n_nodes, 3]: entire epoch train data
             train_data = self.dataGen.get_train_next(args['n_batch'])
@@ -99,6 +101,7 @@ class A2CAgent(object):
             baseline_data = baseline.wrap_dataset(train_data)
             # compute for each batch the rollout
             # train each batch
+            total_demand = torch.zeros(args['batch_size'])
             for batch in range(args['n_batch']):
                 print("batch: ", batch)
                 print("epoch: ", epoch)
@@ -106,6 +109,7 @@ class A2CAgent(object):
                 data, bl_val = baseline.unwrap_batch(baseline_data[batch])
                 bl_val = move_to(bl_val, device) if bl_val is not None else None
                 R, logs, actions = self.rollout_train(data)
+                total_demand += self.env.total_demand
                 # Calculate loss
                 adv = (R - bl_val).to(device)
                 loss = (adv * logs).mean()
@@ -121,6 +125,8 @@ class A2CAgent(object):
             avg_reward = self.rollout_test(self.test_data, self.model).mean()
             print("average test reward: ", avg_reward)
             reward_epoch[epoch] = avg_reward
+
+            total_demand_epoch[epoch] = (total_demand / args['n_epochs']).mean()
             if (epoch % args['save_interval'] == 0) or epoch == args['n_epochs'] - 1:
                 print('Saving model and state...')
                 torch.save(
@@ -147,11 +153,14 @@ class A2CAgent(object):
                 )
 
             baseline.epoch_callback(self.model, epoch)
-            test_rewards.append(avg_reward)
-            # np.savetxt("trained_models/test_rewards.txt", test_rewards)
+            test_rewards.append(avg_reward.cpu().numpy())
+            np.savetxt("saved_models/test_rewards.txt", test_rewards)
             # np.savetxt("trained_models/losses.txt", losses)
             # lr_scheduler should be called at end of epoch
             self.lr_scheduler.step()
+            # ratio = reward_epoch/total_demand_epoch
+            plt.plot(torch.arange(len(test_rewards)), test_rewards)
+            plt.savefig(os.path.join('plots', f'test_rewards-{self.env.n_nodes}.png'))
         plt.plot(torch.arange(args['n_epochs']).numpy(), reward_epoch.cpu().numpy())
         plt.savefig(os.path.join('plots', f'reward_ratio-{self.env.n_nodes}.png'))
 
@@ -163,7 +172,7 @@ class A2CAgent(object):
 
         data, mask, demand, cur_load = env.reset(data)
         data = move_to(data, device)
-        embeddings, fixed = model.embed(data)
+        embeddings, fixed = model.embed(data[:, :, :2])
         state = State(env.batch_size, env.n_nodes, mask, demand, cur_load)
 
         # print("{}: {}".format("initial state", state[0]))
@@ -177,19 +186,19 @@ class A2CAgent(object):
             logs.append(log_p[:, 0, :])
             actions.append(idx)
             time_step += 1
-            print(time_step, " time step")
             data, cur_loc, mask, demand, cur_load, finished = env.step(idx)
             if finished:
                 break
             state.update(cur_loc, mask, demand, cur_load)
             data = move_to(data, device)
-            embeddings, fixed = model.embed(data)
+            # embeddings, fixed = model.embed(data)
 
-            print("{}: {}".format("state update", state[0]))
-            print("{}: {}".format("mask", mask[0]))
-            # print("{}: {}".format("state", env.state[0]))
+        # print("{}: {}".format("state update", state[0]))
+        # print("{}: {}".format("mask", mask[0]))
+        # print("{}: {}".format("state", env.state[0]))
 
         R = (env.reward / env.total_demand).to(device)
+        print("R: ", R.mean())
         logs = torch.stack(logs, 1)
         actions = torch.stack(actions, 1)
 
@@ -203,28 +212,29 @@ class A2CAgent(object):
         set_decode_type(self.model, "greedy")
         data, mask, demand, cur_load = env.reset(data_o)
         data = move_to(data, device)
-        embeddings, fixed = model.embed(data)
+        embeddings, fixed = model.embed(data[:, :, :2])
         state = State(env.batch_size, env.n_nodes, mask, demand, cur_load)
 
-        print("{}: {}".format("initial state", state[0]))
-        print("{}: {}".format("mask", mask[0]))
+        # print("{}: {}".format("initial state", state[0]))
+        # print("{}: {}".format("mask", mask[0]))
         time_step = 0
 
         while time_step < self.args['decode_len']:
             log_p, idx = model(embeddings, fixed, state)
             time_step += 1
-            print(time_step, " time step")
+            # print(time_step, " time step")
             data, cur_loc, mask, demand, cur_load, finished = env.step(idx)
             if finished:
                 break
             data = move_to(data, device)
             state.update(cur_loc, mask, demand, cur_load)
-            embeddings, fixed = model.embed(data)
+        #   embeddings, fixed = model.embed(data)
 
-            print("{}: {}".format("state update", state[0]))
-            print("{}: {}".format("mask", mask[0]))
-            # print("{}: {}".format("state", env.state[0]))
+        # print("{}: {}".format("state update", state[0]))
+        # print("{}: {}".format("mask", mask[0]))
+        # print("{}: {}".format("state", env.state[0]))
 
         R = (env.reward / env.total_demand).to(device)
-
+        print("cur_time", env.cur_time[:5])
+        print("time_demand: ", env.time_demand[:5, :, 3])
         return R
