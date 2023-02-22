@@ -168,7 +168,7 @@ class Env(object):
             # if len(not_occurred_yet) > 0:
             for i, event in enumerate(self.time_demand[batch]):
                 if self.demand[batch, i] != 0:
-                    time = self.dist_mat[batch, self.cur_loc, i] / self.speed
+                    time = self.dist_mat[batch, self.cur_loc[batch], i] / self.speed
                     if event[3] < self.cur_time[batch] + time:
                         self.demand[batch, i] = 0
                         print(f'customer#{i} left')
@@ -177,7 +177,7 @@ class Env(object):
                 if event[2] == 0 or event[0] > self.cur_time[batch]:
                     continue
                 # if customer left (event[3] - leaving time)
-                time = self.dist_mat[batch, self.cur_loc, i] / self.speed
+                time = self.dist_mat[batch, self.cur_loc[batch], i] / self.speed
                 if event[3] < self.cur_time[batch] + time:
                     event[2] = 0
                     print(f'customer#{i} left')
