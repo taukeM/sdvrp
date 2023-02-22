@@ -120,7 +120,7 @@ class Env(object):
                 self.dist_mat[:, j, i] = self.dist_mat[:, i, j]
         self.max_dist = torch.max(torch.max(self.dist_mat, 1)[0], 1)[0]
 
-        self.waiting_time = self.max_dist / self.speed * 2
+        self.waiting_time = self.max_dist / self.speed
         self.waiting_time = self.waiting_time.reshape((-1, 1)).repeat(1, self.n_nodes)
         self.time_demand[:, :, 3] = self.time_demand[:, :, 0] + self.waiting_time
 
@@ -164,19 +164,26 @@ class Env(object):
         self.cur_load[batch] = self.max_load
 
         for batch in range(self.batch_size):
-            not_occurred_yet = torch.where(self.time_demand[batch, :, 2] != 0)[0]
-            if len(not_occurred_yet) > 0:
-                for i, event in enumerate(self.time_demand[batch]):
-                    # continue if demand is zero or event is not occurred yet
-                    if event[2] == 0 or event[0] > self.cur_time[batch]:
-                        continue
-                    # if customer left (event[3] - leaving time)
-                    if event[3] <= self.cur_time[batch]:
-                        event[2] = 0
+            # not_occurred_yet = torch.where(self.time_demand[batch, :, 2] != 0)[0]
+            # if len(not_occurred_yet) > 0:
+            for i, event in enumerate(self.time_demand[batch]):
+                if self.demand[batch, i] != 0:
+                    time = self.dist_mat[batch, self.cur_loc, i] / self.speed
+                    if event[3] < self.cur_time[batch] + time:
+                        self.demand[batch, i] = 0
                         print(f'customer#{i} left')
-                    else:
-                        self.demand[batch, i] = event[2]
-                        event[2] = 0
+                    continue
+                # continue if demand is zero or event is not occurred yet
+                if event[2] == 0 or event[0] > self.cur_time[batch]:
+                    continue
+                # if customer left (event[3] - leaving time)
+                time = self.dist_mat[batch, self.cur_loc, i] / self.speed
+                if event[3] < self.cur_time[batch] + time:
+                    event[2] = 0
+                    print(f'customer#{i} left')
+                else:
+                    self.demand[batch, i] = event[2]
+                    event[2] = 0
 
         # update mask
         self.mask = torch.where(torch.logical_and(self.cur_load >= self.demand, self.demand != 0), 0, 1)
